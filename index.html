@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VaxAI Pro — Pipeline جامع طراحی واکسن</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #070d1a; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// Simple, dependency-free bar chart (no external chart library needed)
+function SimpleBarChart({ data, colors }) {
+  const max = 110;
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 180, paddingTop: 10 }}>
+      {data.map((d, i) => (
+        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: "100%" }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "flex-end", width: "100%" }}>
+            <div style={{
+              width: "100%", height: `${(d.pct / max) * 100}%`,
+              background: colors[i % colors.length], borderRadius: "4px 4px 0 0",
+              minHeight: 4, transition: "height 0.4s",
+            }} />
+          </div>
+          <div style={{ fontSize: 10, color: "#e2e8f0", marginTop: 6, fontFamily: "monospace" }}>{d.pct}%</div>
+          <div style={{ fontSize: 9, color: "#64748b", marginTop: 2, textAlign: "center" }}>{d.name}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Simple, dependency-free radar-style chart (horizontal gauge bars)
+function SimpleRadarChart({ data }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 6 }}>
+      {data.map((d, i) => (
+        <div key={i}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+            <span style={{ fontSize: 10, color: "#94a3b8" }}>{d.subject}</span>
+            <span style={{ fontSize: 10, color: "#06d6a0", fontFamily: "monospace" }}>{Math.round(d.A)}%</span>
+          </div>
+          <div style={{ height: 6, background: "#1a3650", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(100, d.A)}%`, height: "100%", background: "#06d6a0", borderRadius: 4, transition: "width 0.4s" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Pre-defined demo data for 5 pathogens
+// ─────────────────────────────────────────────────────────────────────────
+const PATHOGENS = {
+  "SARS-CoV-2": {
+    icon: "🦠", color: "#ef4444", protein: "Spike Glycoprotein",
+    desc: "ویروس عامل COVID-19 · پاندمی ۲۰۲۰",
+    ctl: [
+      { peptide: "YLQPRTFLL", allele: "HLA-A*02:01", ic50: 4.2 },
+      { peptide: "WTAGAAAYY", allele: "HLA-A*02:01", ic50: 12.8 },
+      { peptide: "KIADYNYKL", allele: "HLA-A*11:01", ic50: 28.3 },
+      { peptide: "QAQLPFEVY", allele: "HLA-A*24:02", ic50: 45.1 },
+      { peptide: "NVKFSSQIL", allele: "HLA-A*03:01", ic50: 67.2 },
+    ],
+    htl: [
+      { peptide: "IRASANLAATKMSECVLGQSK", allele: "HLA-DRB1*07:01", ic50: 95 },
+      { peptide: "VVFLHVTYVPAQEKNFTTAP", allele: "HLA-DRB1*15:01", ic50: 142 },
+      { peptide: "SFIEDLLFNKVTLADAGFIK", allele: "HLA-DRB1*11:01", ic50: 189 },
+    ],
+    bcell: [
+      { peptide: "RVQPTESIVRFPNITNLCP", score: 0.94 },
+      { peptide: "CNGVEGFNCYFPLQSYGFQ", score: 0.91 },
+      { peptide: "CVNFNFNGLTGTGVLTESN", score: 0.87 },
+    ],
+    props: { len: 218, mw: 24.1, pi: 7.2, instab: 32.1, gravy: -0.41 },
+    valid: { antigen: 1.14, allergy: 0.21, toxic: 0.18, cov: 94.2, iran: 96.1, grade: "A" },
+    ss: { "آلفا هلیکس": 34, "بتا شیت": 28, "گره": 18, "کویل": 20 },
+    sag: false,
+  },
+  "Influenza A H1N1": {
+    icon: "🌀", color: "#f59e0b", protein: "Hemagglutinin (HA)",
+    desc: "آنفلوانزای فصلی · پاندمی ۲۰۰۹",
+    ctl: [
+      { peptide: "GILGFVFTL", allele: "HLA-A*02:01", ic50: 3.1 },
+      { peptide: "FMYSDFHFI", allele: "HLA-A*02:01", ic50: 18.5 },
+      { peptide: "SVSSFERFEIF", allele: "HLA-A*03:01", ic50: 34.7 },
+      { peptide: "LPFQNVHPV", allele: "HLA-A*11:01", ic50: 56.2 },
+      { peptide: "EIASDFGTL", allele: "HLA-A*24:02", ic50: 72.3 },
+    ],
+    htl: [
+      { peptide: "HNTNGVTAACSHEGKSSFYK", allele: "HLA-DRB1*03:01", ic50: 78 },
+      { peptide: "QISVSSFERFEIFPKTSSWP", allele: "HLA-DRB1*07:01", ic50: 131 },
+      { peptide: "IPSSMASSLFERLNWYKYPQ", allele: "HLA-DRB1*15:01", ic50: 215 },
+    ],
+    bcell: [
+      { peptide: "CQTQFNGSRVVVSTKGVWA", score: 0.96 },
+      { peptide: "HNGSSKSFHNCPPQHPIGK", score: 0.89 },
+      { peptide: "KDSSTPQAQLCRLHGVMGH", score: 0.83 },
+    ],
+    props: { len: 203, mw: 22.7, pi: 6.8, instab: 28.4, gravy: -0.37 },
+    valid: { antigen: 1.08, allergy: 0.19, toxic: 0.14, cov: 92.8, iran: 94.5, grade: "A" },
+    ss: { "آلفا هلیکس": 40, "بتا شیت": 22, "گره": 16, "کویل": 22 },
+    sag: false,
+  },
+  "HIV-1": {
+    icon: "⚡", color: "#a855f7", protein: "Envelope gp120",
+    desc: "ویروس نقص ایمنی انسانی · بیماری AIDS",
+    ctl: [
+      { peptide: "SLYNTVATL", allele: "HLA-A*02:01", ic50: 6.8 },
+      { peptide: "EIYKRWII",  allele: "HLA-B*57:01", ic50: 14.2 },
+      { peptide: "KAFSPEVIPMF", allele: "HLA-B*57:01", ic50: 22.9 },
+      { peptide: "ILKEPVHGV", allele: "HLA-A*02:01", ic50: 41.3 },
+      { peptide: "GPGHKARVL", allele: "HLA-A*03:01", ic50: 58.7 },
+    ],
+    htl: [
+      { peptide: "KQIINMWQKVGKAMYAPPIEG", allele: "HLA-DRB1*01:01", ic50: 112 },
+      { peptide: "IGPGRAWYASPIIFQSSMTKI", allele: "HLA-DRB1*04:01", ic50: 178 },
+      { peptide: "LRPGGKKKYMLKHIVWASREL", allele: "HLA-DRB1*07:01", ic50: 243 },
+    ],
+    bcell: [
+      { peptide: "KSITQACPKVSFEPIPIHYC", score: 0.92 },
+      { peptide: "NNTRKSIRIGPGRAFYTTGE", score: 0.88 },
+      { peptide: "CTGIKPTDPTEELRQHYWDN", score: 0.84 },
+    ],
+    props: { len: 231, mw: 25.8, pi: 8.1, instab: 38.2, gravy: -0.29 },
+    valid: { antigen: 1.09, allergy: 0.27, toxic: 0.22, cov: 89.4, iran: 91.2, grade: "B" },
+    ss: { "آلفا هلیکس": 29, "بتا شیت": 31, "گره": 20, "کویل": 20 },
+    sag: false,
+  },
+  "M. tuberculosis": {
+    icon: "🔬", color: "#10b981", protein: "ESAT-6 / CFP-10",
+    desc: "مایکوباکتریوم توبرکلوزیس · سل ریوی",
+    ctl: [
+      { peptide: "AMASTEGNV", allele: "HLA-A*02:01", ic50: 9.3 },
+      { peptide: "LLDEGKQSL", allele: "HLA-A*02:01", ic50: 21.7 },
+      { peptide: "QIMYNYPAM", allele: "HLA-A*11:01", ic50: 39.4 },
+      { peptide: "LQEALNFAS", allele: "HLA-A*24:02", ic50: 52.1 },
+      { peptide: "MTGTSSGNL", allele: "HLA-A*03:01", ic50: 78.6 },
+    ],
+    htl: [
+      { peptide: "MAEMKTDAATLAQEAGNFER", allele: "HLA-DRB1*11:01", ic50: 88 },
+      { peptide: "IQIMYNYPAMMAYQQGDNPN", allele: "HLA-DRB1*03:01", ic50: 155 },
+      { peptide: "GALELSDSEQTLQQMRNQLS", allele: "HLA-DRB1*15:01", ic50: 201 },
+    ],
+    bcell: [
+      { peptide: "NDAANLLAQYGQSEAIQQAT", score: 0.91 },
+      { peptide: "MQSTDISNHQQFYQLDDSS", score: 0.86 },
+      { peptide: "AIPQSLERLTPELEAAHVEA", score: 0.82 },
+    ],
+    props: { len: 196, mw: 21.9, pi: 5.9, instab: 24.8, gravy: -0.51 },
+    valid: { antigen: 1.21, allergy: 0.16, toxic: 0.13, cov: 91.7, iran: 93.4, grade: "A" },
+    ss: { "آلفا هلیکس": 45, "بتا شیت": 18, "گره": 15, "کویل": 22 },
+    sag: false,
+  },
+  "Dengue Virus": {
+    icon: "🌊", color: "#3b82f6", protein: "Envelope Protein (E)",
+    desc: "ویروس دنگ · تب خونریزی‌دهنده گرمسیری",
+    ctl: [
+      { peptide: "FLVKNLKL",  allele: "HLA-A*02:01", ic50: 11.4 },
+      { peptide: "KEIDLSMFKK", allele: "HLA-A*11:01", ic50: 19.8 },
+      { peptide: "WGNGCGLFG", allele: "HLA-A*02:01", ic50: 33.6 },
+      { peptide: "FVKRNEDVL", allele: "HLA-A*24:02", ic50: 49.2 },
+      { peptide: "AQINSRPTV", allele: "HLA-A*03:01", ic50: 83.4 },
+    ],
+    htl: [
+      { peptide: "QGTTTKSVTDGRGNKIVTQI", allele: "HLA-DRB1*04:01", ic50: 104 },
+      { peptide: "LMKKNMEGKGRFGKGSITLQ", allele: "HLA-DRB1*07:01", ic50: 168 },
+      { peptide: "EPVIIDKGEAKLCEYNSSGS", allele: "HLA-DRB1*11:01", ic50: 228 },
+    ],
+    bcell: [
+      { peptide: "HKNLTRIMDLHPGSGKTKRY", score: 0.93 },
+      { peptide: "RCGRGSLKLSYAMCTNTFVS", score: 0.88 },
+      { peptide: "CNTNITIVDKGKSTVEDLFI", score: 0.85 },
+    ],
+    props: { len: 208, mw: 23.2, pi: 7.4, instab: 31.5, gravy: -0.38 },
+    valid: { antigen: 1.07, allergy: 0.24, toxic: 0.20, cov: 90.1, iran: 92.6, grade: "A" },
+    ss: { "آلفا هلیکس": 31, "بتا شیت": 33, "گره": 17, "کویل": 19 },
+    sag: false,
+  },
+};
+
+const STEPS = [
+  { id: 0, label: "شناسایی آنتی‌ژن",      icon: "🔎", color: "#06d6a0" },
+  { id: 1, label: "پیش‌بینی اپی‌توپ",     icon: "🧬", color: "#3b82f6" },
+  { id: 2, label: "ساخت مدل واکسن",       icon: "⚗️",  color: "#a855f7" },
+  { id: 3, label: "حساسیت‌سنجی + سمیت", icon: "🛡️",  color: "#f59e0b" },
+];
+
+// ─────────────────────────────────────────────────────────────────────────
+//  AI insight text (fully local — no external API calls, no key needed)
+// ─────────────────────────────────────────────────────────────────────────
+function generateInsight(stepIndex, selected, p) {
+  const texts = [
+    `${p.protein} در سطح ${selected} قرار دارد و مستقیماً در معرض سیستم ایمنی است، به همین دلیل آنتی‌ژن مناسبی برای طراحی واکسن محسوب می‌شود. ساختار پروتئینی آن امکان اتصال پایدار به اپی‌توپ‌ها را فراهم می‌کند.`,
+    `اپی‌توپ‌های CTL با IC50 پایین‌تر (اتصال قوی‌تر به HLA کلاس I) از نظر ایمنولوژیک اولویت بالاتری دارند، زیرا مستقیماً سلول‌های آلوده را هدف قرار می‌دهند. اپی‌توپ‌های HTL و B-cell نیز پاسخ آنتی‌بادی را تقویت می‌کنند.`,
+    `سازه چند اپی‌توپی طراحی‌شده با وزن ${p.props.mw} کیلودالتون و طول ${p.props.len} آمینو اسید، نسبت به واکسن‌های سنتی پاسخ ایمنی هدفمندتر و ایمن‌تری ایجاد می‌کند. ترکیب اپی‌توپ‌های CTL، HTL و B-cell پوشش ایمنی گسترده‌تری می‌دهد.`,
+    `با آنتی‌ژنیسیتی ${p.valid.antigen}، آلرژی‌زایی ${p.valid.allergy} و پوشش جمعیتی ${p.valid.cov}٪، این سازه معیارهای اولیه لازم برای ورود به مراحل پیش‌بالینی را دارا است. آزمایش‌های آزمایشگاهی بیشتر برای تأیید نهایی توصیه می‌شود.`,
+  ];
+  return texts[stepIndex];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Styled sub-components
+// ─────────────────────────────────────────────────────────────────────────
+function Badge({ children, color = "#06d6a0" }) {
+  return (
+    <span style={{
+      background: color + "22", color, border: `1px solid ${color}44`,
+      borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 700,
+      letterSpacing: 0.5, fontFamily: "monospace",
+    }}>{children}</span>
+  );
+}
+
+function Card({ children, style = {} }) {
+  return (
+    <div style={{
+      background: "#0f2033", border: "1px solid #1a3650",
+      borderRadius: 12, padding: 20, ...style,
+    }}>{children}</div>
+  );
+}
+
+function GradeCircle({ grade }) {
+  const colors = { A: "#10b981", B: "#f59e0b", C: "#ef4444" };
+  const c = colors[grade] || "#64748b";
+  return (
+    <div style={{
+      width: 72, height: 72, borderRadius: "50%",
+      border: `3px solid ${c}`, display: "flex", alignItems: "center",
+      justifyContent: "center", fontSize: 28, fontWeight: 900, color: c,
+      boxShadow: `0 0 20px ${c}44`,
+    }}>{grade}</div>
+  );
+}
+
+function Metric({ label, value, unit = "", color = "#06d6a0", passed }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ color: "#64748b", fontSize: 11, marginBottom: 4 }}>{label}</div>
+      <div style={{
+        fontSize: 22, fontWeight: 800, color,
+        fontFamily: "monospace",
+      }}>{value}{unit}</div>
+      {passed !== undefined && (
+        <div style={{ fontSize: 10, color: passed ? "#10b981" : "#ef4444", marginTop: 2 }}>
+          {passed ? "✓ ایمن" : "⚠ بررسی شود"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EpitopeRow({ ep, type, idx }) {
+  const typeColor = { CTL: "#ef4444", HTL: "#3b82f6", BCL: "#10b981" };
+  const c = typeColor[type];
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "40px 1fr 1fr auto",
+      gap: 8, padding: "8px 12px", borderRadius: 8,
+      background: idx % 2 === 0 ? "#0d1829" : "transparent",
+      alignItems: "center",
+    }}>
+      <Badge color={c}>{type}</Badge>
+      <span style={{ fontFamily: "monospace", color: "#e2e8f0", fontSize: 13, letterSpacing: 1 }}>
+        {ep.peptide}
+      </span>
+      <span style={{ color: "#64748b", fontSize: 11 }}>{ep.allele || "—"}</span>
+      <span style={{
+        color: ep.ic50 ? (ep.ic50 < 50 ? "#10b981" : "#f59e0b") : "#06d6a0",
+        fontSize: 12, fontFamily: "monospace",
+      }}>
+        {ep.ic50 ? `IC₅₀ ${ep.ic50} nM` : `Score ${ep.score}`}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Main App
+// ─────────────────────────────────────────────────────────────────────────
+function VaxAIApp() {
+  const [selected, setSelected]     = useState(null);
+  const [step, setStep]             = useState(-1);
+  const [running, setRunning]       = useState(false);
+  const [done, setDone]             = useState(false);
+  const [insights, setInsights]     = useState({});
+  const [loadingStep, setLoadingStep] = useState(-1);
+  const [seqIdx, setSeqIdx]         = useState(0);
+
+  const SEQ = "MFVFLVLLPLVSSQCVNLTTRTQLPPAYTNSFTRGVYYPDKVFRSSVLHSTQDLFLPFFSNVTWFHAIHVSGTNGTKRFDNPVLPFNDGVYFASTEKSNIIRGWIFGTTLDSKTQ";
+
+  useEffect(() => {
+    const t = setInterval(() => setSeqIdx(i => (i + 1) % SEQ.length), 80);
+    return () => clearInterval(t);
+  }, []);
+
+  const runPipeline = useCallback(async () => {
+    if (!selected) return;
+    const p = PATHOGENS[selected];
+    setRunning(true); setDone(false); setInsights({}); setStep(0);
+
+    for (let i = 0; i < 4; i++) {
+      setStep(i); setLoadingStep(i);
+      await new Promise(r => setTimeout(r, 550));
+      const text = generateInsight(i, selected, p);
+      setInsights(prev => ({ ...prev, [i]: text }));
+      setLoadingStep(-1);
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    setRunning(false); setDone(true);
+  }, [selected]);
+
+  const reset = () => {
+    setSelected(null); setStep(-1); setRunning(false);
+    setDone(false); setInsights({});
+  };
+
+  const p = selected ? PATHOGENS[selected] : null;
+
+  const radarData = p ? [
+    { subject: "آنتی‌ژنیسیتی",  A: Math.min(100, p.valid.antigen * 70) },
+    { subject: "ایمنی آلرژی",   A: Math.round((1 - p.valid.allergy) * 100) },
+    { subject: "ایمنی سمیت",   A: Math.round((1 - p.valid.toxic)   * 100) },
+    { subject: "پوشش جمعیتی",  A: p.valid.cov },
+    { subject: "پوشش ایران",   A: p.valid.iran },
+  ] : [];
+
+  const coverageData = p ? [
+    { name: "CTL جهانی", pct: Math.round(p.valid.cov * 0.85) },
+    { name: "HTL جهانی", pct: Math.round(p.valid.cov * 0.78) },
+    { name: "ترکیبی",    pct: p.valid.cov },
+    { name: "ایران",     pct: p.valid.iran },
+  ] : [];
+
+  const ssData = p ? Object.entries(p.ss).map(([name, value]) => ({ name, value })) : [];
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#070d1a", color: "#e2e8f0",
+      fontFamily: "'Segoe UI', system-ui, sans-serif", direction: "rtl",
+    }}>
+
+      <div style={{
+        background: "linear-gradient(135deg, #0d1829 0%, #0a1628 50%, #080f1f 100%)",
+        borderBottom: "1px solid #1a3650", padding: "28px 32px",
+      }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: 10,
+              background: "linear-gradient(135deg, #06d6a0, #3b82f6)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 20,
+            }}>🧪</div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: -0.5 }}>
+                VaxAI Pro
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>Pipeline جامع طراحی واکسن</div>
+            </div>
+            <div style={{ marginRight: "auto", display: "flex", gap: 6 }}>
+              {["ماژول ۱", "ماژول ۲", "ماژول ۳", "ماژول ۴"].map((m, i) => (
+                <Badge key={i} color={i <= step ? "#06d6a0" : "#1a3650"}>{m}</Badge>
+              ))}
+            </div>
+          </div>
+          <div style={{
+            fontFamily: "monospace", fontSize: 11, color: "#1a4060",
+            letterSpacing: 2, overflow: "hidden", whiteSpace: "nowrap",
+          }}>
+            {SEQ.slice(seqIdx).concat(SEQ.slice(0, seqIdx)).split("").map((ch, i) => (
+              <span key={i} style={{ color: i < 8 ? "#06d6a066" : "#1a3050" }}>{ch}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 24px" }}>
+
+        {!done && (
+          <>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <div style={{ fontSize: 14, color: "#64748b", marginBottom: 6 }}>
+                پاتوژن هدف را انتخاب کنید
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#fff" }}>
+                ۵ مدل واکسن آماده بررسی
+              </div>
+            </div>
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 28,
+            }}>
+              {Object.entries(PATHOGENS).map(([name, data]) => (
+                <div key={name} onClick={() => !running && setSelected(name)}
+                  style={{
+                    background: selected === name
+                      ? `linear-gradient(135deg, ${data.color}22, ${data.color}11)`
+                      : "#0f2033",
+                    border: `2px solid ${selected === name ? data.color : "#1a3650"}`,
+                    borderRadius: 12, padding: "16px 12px", cursor: running ? "default" : "pointer",
+                    textAlign: "center", transition: "all 0.2s",
+                    boxShadow: selected === name ? `0 0 20px ${data.color}33` : "none",
+                  }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>{data.icon}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
+                    {name}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8 }}>{data.protein}</div>
+                  <Badge color={data.color}>{data.valid.grade}</Badge>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 28 }}>
+              {STEPS.map((s, i) => (
+                <div key={s.id} style={{ flex: 1, display: "flex", alignItems: "center" }}>
+                  <div style={{
+                    flex: 1, background: step >= s.id ? "#0f2033" : "#0a1628",
+                    border: `1px solid ${step >= s.id ? s.color : "#1a3650"}`,
+                    borderRadius: 10, padding: "12px 10px", textAlign: "center",
+                    transition: "all 0.4s",
+                    boxShadow: step === s.id ? `0 0 15px ${s.color}44` : "none",
+                  }}>
+                    <div style={{ fontSize: 18, marginBottom: 4 }}>{s.icon}</div>
+                    <div style={{
+                      fontSize: 11, color: step >= s.id ? s.color : "#64748b",
+                      fontWeight: 600,
+                    }}>{s.label}</div>
+                  </div>
+                  {i < 3 && <div style={{
+                    width: 24, height: 2,
+                    background: step > s.id ? "#06d6a0" : "#1a3650",
+                    transition: "background 0.4s", flexShrink: 0,
+                  }} />}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ textAlign: "center" }}>
+              <button onClick={runPipeline} disabled={!selected || running}
+                style={{
+                  background: selected && !running
+                    ? "linear-gradient(135deg, #06d6a0, #3b82f6)"
+                    : "#1a3650",
+                  color: "#fff", border: "none", borderRadius: 12,
+                  padding: "14px 48px", fontSize: 16, fontWeight: 700,
+                  cursor: selected && !running ? "pointer" : "not-allowed",
+                  transition: "all 0.2s",
+                  boxShadow: selected && !running ? "0 4px 20px #06d6a044" : "none",
+                }}>
+                {running ? `⏳ ماژول ${step + 1} / 4 در حال اجرا…` : "▶  اجرای کامل Pipeline"}
+              </button>
+              {!selected && (
+                <div style={{ color: "#64748b", fontSize: 12, marginTop: 8 }}>
+                  ابتدا یک پاتوژن انتخاب کنید
+                </div>
+              )}
+            </div>
+
+            {running && (
+              <div style={{ marginTop: 28 }}>
+                {STEPS.map((s, i) => i <= step && (
+                  <Card key={i} style={{ marginBottom: 12, borderColor: s.color + "44" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontSize: 18 }}>{s.icon}</span>
+                      <span style={{ color: s.color, fontWeight: 700 }}>{s.label}</span>
+                      {loadingStep === i && (
+                        <span style={{ color: "#64748b", fontSize: 12 }}>● در حال تحلیل…</span>
+                      )}
+                    </div>
+                    {insights[i] ? (
+                      <p style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.7, margin: 0 }}>
+                        {insights[i]}
+                      </p>
+                    ) : (
+                      <div style={{ color: "#1a3650", fontSize: 12 }}>…</div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {done && p && (
+          <div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 16,
+              background: "#0f2033", border: "1px solid #1a3650",
+              borderRadius: 12, padding: "16px 20px", marginBottom: 20,
+            }}>
+              <span style={{ fontSize: 32 }}>{p ? PATHOGENS[selected].icon : ""}</span>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800 }}>{selected}</div>
+                <div style={{ color: "#64748b", fontSize: 12 }}>{p.protein} · {p.desc}</div>
+              </div>
+              <GradeCircle grade={p.valid.grade} />
+              <div style={{ marginRight: "auto" }}>
+                <button onClick={reset} style={{
+                  background: "transparent", border: "1px solid #1a3650",
+                  color: "#64748b", borderRadius: 8, padding: "8px 16px",
+                  cursor: "pointer", fontSize: 13,
+                }}>← بازگشت</button>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+              {STEPS.map((s, i) => (
+                <Card key={i} style={{ borderColor: s.color + "33" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <span>{s.icon}</span>
+                    <span style={{ color: s.color, fontSize: 12, fontWeight: 700 }}>{s.label}</span>
+                  </div>
+                  <p style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.7, margin: 0 }}>
+                    {insights[i] || "—"}
+                  </p>
+                </Card>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: 12, marginBottom: 20 }}>
+              <Card>
+                <div style={{ color: "#64748b", fontSize: 11, marginBottom: 14 }}>
+                  ⚗️ خواص فیزیکوشیمیایی سازه
+                </div>
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  <Metric label="طول سازه"    value={p.props.len}    unit=" aa"  color="#06d6a0" />
+                  <Metric label="وزن مولکولی" value={p.props.mw}     unit=" kDa" color="#3b82f6" />
+                  <Metric label="نقطه ایزوالکتریک" value={p.props.pi} color="#a855f7" />
+                  <Metric label="Instability" value={p.props.instab} color={p.props.instab < 40 ? "#10b981" : "#f59e0b"} passed={p.props.instab < 40} />
+                  <Metric label="GRAVY"        value={p.props.gravy} color={p.props.gravy < 0 ? "#10b981" : "#f59e0b"} passed={p.props.gravy < 0} />
+                </div>
+              </Card>
+              <Card style={{ textAlign: "center" }}>
+                <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>درجه کلی واکسن</div>
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <GradeCircle grade={p.valid.grade} />
+                </div>
+                <div style={{ color: "#64748b", fontSize: 11, marginTop: 12 }}>
+                  {p.valid.grade === "A" ? "✅ آماده پیشرفت" : "🔄 نیاز به بهینه‌سازی"}
+                </div>
+              </Card>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+              <Card>
+                <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>🎯 معیارهای اعتبارسنجی</div>
+                <SimpleRadarChart data={radarData} />
+              </Card>
+
+              <Card>
+                <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>🌍 پوشش جمعیتی HLA (%)</div>
+                <SimpleBarChart data={coverageData} colors={["#3b82f6","#6366f1","#06d6a0","#10b981"]} />
+              </Card>
+
+              <Card>
+                <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>🔮 ساختار ثانویه</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 8 }}>
+                  {ssData.map((s, i) => {
+                    const c = ["#ef4444","#3b82f6","#f59e0b","#10b981"][i];
+                    return (
+                      <div key={i}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                          <span style={{ fontSize:11, color:"#94a3b8" }}>{s.name}</span>
+                          <span style={{ fontSize:11, color:c, fontFamily:"monospace" }}>{s.value}%</span>
+                        </div>
+                        <div style={{ height:6, background:"#1a3650", borderRadius:4, overflow:"hidden" }}>
+                          <div style={{ width:`${s.value}%`, height:"100%", background:c, borderRadius:4 }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+              {[
+                { label:"آنتی‌ژنیسیتی", val: p.valid.antigen, thr: 0.5, invert: false, color:"#06d6a0" },
+                { label:"آلرژی‌زایی",  val: p.valid.allergy, thr: 0.5, invert: true,  color:"#f59e0b" },
+                { label:"سمیت",        val: p.valid.toxic,  thr: 0.5, invert: true,  color:"#ef4444" },
+              ].map((m, i) => {
+                const safe = m.invert ? m.val < m.thr : m.val >= m.thr;
+                return (
+                  <Card key={i} style={{ borderColor: safe ? "#10b98144" : "#ef444444" }}>
+                    <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>{m.label}</div>
+                    <div style={{ fontSize: 32, fontWeight: 900, fontFamily: "monospace", color: m.color }}>
+                      {m.val}
+                    </div>
+                    <div style={{ color: safe ? "#10b981" : "#ef4444", fontSize: 12, marginTop: 6 }}>
+                      {safe ? "✅ تأیید شد" : "⚠ بررسی شود"}
+                    </div>
+                    <div style={{ height: 4, background: "#1a3650", borderRadius: 4, marginTop: 10, overflow: "hidden" }}>
+                      <div style={{
+                        width: `${Math.min(100, m.val * 70)}%`, height: "100%",
+                        background: m.color, borderRadius: 4,
+                      }} />
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <Card style={{ marginBottom: 20 }}>
+              <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>
+                🧬 اپی‌توپ‌های انتخاب‌شده — {p.ctl.length + p.htl.length + p.bcell.length} اپی‌توپ کل
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 1fr auto", gap: 8,
+                padding: "6px 12px", marginBottom: 4 }}>
+                {["نوع","پپتید","آلل HLA","امتیاز"].map(h => (
+                  <span key={h} style={{ color:"#1a3650", fontSize:10, fontWeight:700 }}>{h}</span>
+                ))}
+              </div>
+              {[...p.ctl.map(e=>({...e,t:"CTL"})),
+                ...p.htl.map(e=>({...e,t:"HTL"})),
+                ...p.bcell.map(e=>({...e,t:"BCL"}))
+              ].map((ep, i) => (
+                <EpitopeRow key={i} ep={ep} type={ep.t} idx={i} />
+              ))}
+            </Card>
+
+            <Card>
+              <div style={{ color: "#64748b", fontSize: 11, marginBottom: 8 }}>
+                📄 توالی سازه نهایی — آماده برای AlphaFold3
+              </div>
+              <div style={{
+                fontFamily: "monospace", fontSize: 11, color: "#06d6a0", lineHeight: 1.8,
+                background: "#070d1a", borderRadius: 8, padding: 12, wordBreak: "break-all",
+              }}>
+                {">" + selected.replace(" ","_") + "_VaxAI_Construct"}<br />
+                <span style={{ color: "#a855f7" }}>
+                  {(PATHOGENS[selected]?.protein || "").substring(0, 20)}...
+                </span>
+                <span style={{ color: "#3b82f6" }}>{"EAAAK"}</span>
+                {p.ctl.map(e => (
+                  <span key={e.peptide}>
+                    <span style={{ color: "#ef4444" }}>{e.peptide}</span>
+                    <span style={{ color: "#1a3650" }}>{"AAY"}</span>
+                  </span>
+                ))}
+                <span style={{ color: "#06d6a0" }}>{p.htl.map(e=>e.peptide).join("GPGPG")}</span>
+                <span style={{ color: "#1a3650" }}>{"KK"}</span>
+                <span style={{ color: "#f59e0b" }}>{p.bcell.map(e=>e.peptide).join("KK")}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <Badge color="#06d6a0">آماده برای AlphaFold3</Badge>
+                <Badge color="#3b82f6">{p.props.len} aa</Badge>
+                <Badge color="#a855f7">{p.props.mw} kDa</Badge>
+                {!p.sag && <Badge color="#10b981">✓ فاقد خاصیت ابر آنتی‌ژن</Badge>}
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        borderTop: "1px solid #1a3650", padding: "16px 32px",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        color: "#1a3650", fontSize: 11, marginTop: 32,
+      }}>
+        <span>VaxAI Pro — Proof of Concept</span>
+        <span>NCBI · UniProt · IEDB · AlphaFold3</span>
+        <span>نتایج صرفاً برای نمایش امکان‌پذیری است</span>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<VaxAIApp />);
+</script>
+</body>
+</html>
